@@ -1,5 +1,5 @@
 // FFmpeg.wasm renderer — burns ASS subtitles into the video and re-encodes.
-// Singleton ffmpeg instance to avoid re-loading the ~30MB core.
+// Uses the single-threaded core so it works without SharedArrayBuffer / COOP-COEP.
 
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { fetchFile, toBlobURL } from "@ffmpeg/util";
@@ -22,21 +22,34 @@ export async function getFFmpeg(
   if (ffmpeg) return ffmpeg;
   if (loadingPromise) return loadingPromise;
   loadingPromise = (async () => {
-    const instance = new FFmpeg();
-    instance.on("log", ({ message }) => {
-      onLog?.(message);
-    });
-    onLog?.("Loading FFmpeg core (≈30MB, one-time)…");
-    const baseURL = "https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd";
-    await instance.load({
-      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
-      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm"),
-    });
-    ffmpeg = instance;
-    onLog?.("FFmpeg ready");
-    return instance;
+    try {
+      const instance = new FFmpeg();
+      instance.on("log", ({ message }) => {
+        onLog?.(message);
+      });
+      onLog?.("Loading FFmpeg core (≈25MB, one-time)…");
+      // Single-threaded core — no SharedArrayBuffer required, works on any host.
+      const baseURL = "https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd";
+      await instance.load({
+        coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
+        wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm"),
+      });
+      ffmpeg = instance;
+      onLog?.("FFmpeg ready");
+      return instance;
+    } catch (e) {
+      loadingPromise = null;
+      throw e;
+    }
   })();
   return loadingPromise;
+}
+
+// Reset the singleton — call after a fatal error so the next attempt re-loads cleanly.
+export function resetFFmpeg() {
+  try { ffmpeg?.terminate(); } catch {}
+  ffmpeg = null;
+  loadingPromise = null;
 }
 
 export async function renderCaptionedVideo(opts: {
@@ -48,12 +61,20 @@ export async function renderCaptionedVideo(opts: {
   onProgress?: (ratio: number) => void;
   onLog?: (msg: string) => void;
 }): Promise<Blob> {
-  const { videoFile, assText, resolution, sourceWidth, sourceHeight, onProgress, onLog } = opts;
+  const { videoFile, assText, resolution, sourceHeight, onProgress, onLog } = opts;
   const ff = await getFFmpeg(onLog);
 
-  const inputName = "input" + (videoFile.name.match(/\.[a-z0-9]+$/i)?.[0] ?? ".mp4");
+  // Use safe ASCII filenames inside the ffmpeg virtual FS — libass and the
+  // subtitles filter are picky about paths with spaces or unicode.
+  const ext = (videoFile.name.match(/\.[a-z0-9]+$/i)?.[0] ?? ".mp4").toLowerCase();
+  const inputName = `input${ext}`;
   const subName = "captions.ass";
   const outName = "output.mp4";
+
+  // Clean any leftovers from a previous failed run.
+  for (const f of [inputName, subName, outName]) {
+    try { await ff.deleteFile(f); } catch {}
+  }
 
   await ff.writeFile(inputName, await fetchFile(videoFile));
   await ff.writeFile(subName, new TextEncoder().encode(assText));
@@ -63,12 +84,12 @@ export async function renderCaptionedVideo(opts: {
   if (resolution !== "source") {
     const targetH = RES_HEIGHT[resolution];
     if (targetH !== sourceHeight) {
-      // Scale by height, preserve aspect, force even dimensions
-      scaleFilter = `scale=-2:${targetH}`;
+      scaleFilter = `scale=-2:${targetH}:flags=lanczos`;
     }
   }
 
-  // Build filter chain — subtitles MUST come after scaling so font sizing matches output
+  // Build filter chain — subtitles MUST come after scaling so font sizing matches output.
+  // The filename has no special chars, so no escaping needed.
   const filters = [scaleFilter, `subtitles=${subName}`].filter(Boolean).join(",");
 
   const progressHandler = ({ progress }: { progress: number }) => {
@@ -76,33 +97,57 @@ export async function renderCaptionedVideo(opts: {
   };
   ff.on("progress", progressHandler);
 
+  let exitCode: number;
   try {
-    await ff.exec([
+    exitCode = await ff.exec([
       "-i", inputName,
       "-vf", filters,
       "-c:v", "libx264",
       "-preset", "veryfast",
       "-crf", "20",
+      "-pix_fmt", "yuv420p",
       "-c:a", "aac",
       "-b:a", "192k",
       "-movflags", "+faststart",
+      "-y",
       outName,
     ]);
-  } finally {
+  } catch (e) {
     ff.off("progress", progressHandler);
+    resetFFmpeg();
+    throw new Error(
+      "FFmpeg crashed during render. This often means the video is too large for the browser. " +
+      "Try a shorter clip or a lower export resolution. " +
+      `(${e instanceof Error ? e.message : String(e)})`,
+    );
+  }
+  ff.off("progress", progressHandler);
+
+  if (exitCode !== 0) {
+    throw new Error(
+      `FFmpeg exited with code ${exitCode}. Check the log panel for the underlying ffmpeg error ` +
+      `(common causes: unsupported codec in source video, or audio track missing).`,
+    );
   }
 
-  const data = (await ff.readFile(outName)) as Uint8Array;
+  let data: Uint8Array;
+  try {
+    data = (await ff.readFile(outName)) as Uint8Array;
+  } catch {
+    throw new Error("Render finished but output file is missing — see logs.");
+  }
+  if (!data || data.byteLength === 0) {
+    throw new Error("Render produced an empty file — see logs.");
+  }
+
   // Copy into a fresh ArrayBuffer to satisfy strict Blob typings
   const buf = new Uint8Array(data.byteLength);
   buf.set(data);
   const blob = new Blob([buf.buffer], { type: "video/mp4" });
+
   // Cleanup
-  try {
-    await ff.deleteFile(inputName);
-    await ff.deleteFile(subName);
-    await ff.deleteFile(outName);
-  } catch {}
-  void sourceWidth;
+  for (const f of [inputName, subName, outName]) {
+    try { await ff.deleteFile(f); } catch {}
+  }
   return blob;
 }
