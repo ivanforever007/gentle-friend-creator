@@ -132,26 +132,38 @@ export function CaptionPreview({ videoUrl, words, style, className }: Props) {
             {activeLine.map((w, i) => {
               const isActive = t >= w.start && t <= w.end;
               const highlighted = style.highlightMode !== "none" && isActive;
+              const isLast = i === activeLine.length - 1;
               return (
-                <span
-                  key={i}
-                  style={{
-                    color: highlighted ? style.highlight : style.primary,
-                    transition: "color 60ms linear",
-                    display: "inline-block",
-                    transform: highlighted && (style.anim === "pop" || style.anim === "bounce") ? "scale(1.12)" : "scale(1)",
-                    transformOrigin: "center",
-                    transitionProperty: "color, transform",
-                    transitionDuration: "120ms",
-                  }}
-                >
-                  {w.word}
-                  {i < activeLine.length - 1 ? " " : ""}
+                <span key={i} style={{ whiteSpace: "pre" }}>
+                  <span
+                    style={{
+                      color: highlighted ? style.highlight : style.primary,
+                      display: "inline-block",
+                      transform: highlighted && (style.anim === "pop" || style.anim === "bounce") ? "scale(1.12)" : "scale(1)",
+                      transformOrigin: "center",
+                      transitionProperty: "color, transform",
+                      transitionDuration: "120ms",
+                    }}
+                  >
+                    {w.word}
+                  </span>
+                  {!isLast && "\u00A0"}
                 </span>
               );
             })}
           </span>
         </div>
+      )}
+
+      {videoUrl && (
+        <button
+          type="button"
+          onClick={toggleFs}
+          aria-label={isFs ? "Exit fullscreen" : "Enter fullscreen"}
+          className="absolute right-3 top-3 z-10 flex h-9 w-9 items-center justify-center rounded-lg bg-black/60 text-white opacity-0 backdrop-blur transition-opacity hover:bg-black/80 group-hover:opacity-100 focus:opacity-100"
+        >
+          {isFs ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+        </button>
       )}
     </div>
   );
