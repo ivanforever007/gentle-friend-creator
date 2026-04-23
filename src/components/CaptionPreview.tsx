@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Maximize2, Minimize2 } from "lucide-react";
 import type { CaptionStyle } from "@/lib/captionStyles";
 import type { WordTiming } from "@/lib/transcribe";
 
@@ -38,6 +39,26 @@ export function CaptionPreview({ videoUrl, words, style, className }: Props) {
     return () => ro.disconnect();
   }, []);
 
+  const [isFs, setIsFs] = useState(false);
+  useEffect(() => {
+    const onFs = () => setIsFs(document.fullscreenElement === containerRef.current);
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
+  const toggleFs = useCallback(async () => {
+    const el = containerRef.current;
+    if (!el) return;
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        await el.requestFullscreen();
+      }
+    } catch (e) {
+      console.error("Fullscreen failed", e);
+    }
+  }, []);
+
   // Group into lines exactly like ASS builder
   const lines = useMemo(() => {
     const ls: WordTiming[][] = [];
@@ -66,13 +87,15 @@ export function CaptionPreview({ videoUrl, words, style, className }: Props) {
   const textShadow = `${style.outlineWidth}px 0 0 ${style.outline}, -${style.outlineWidth}px 0 0 ${style.outline}, 0 ${style.outlineWidth}px 0 ${style.outline}, 0 -${style.outlineWidth}px 0 ${style.outline}, ${style.outlineWidth}px ${style.outlineWidth}px 0 ${style.outline}, -${style.outlineWidth}px -${style.outlineWidth}px 0 ${style.outline}, ${style.outlineWidth}px -${style.outlineWidth}px 0 ${style.outline}, -${style.outlineWidth}px ${style.outlineWidth}px 0 ${style.outline}${style.shadow ? `, 0 ${style.shadow}px ${style.shadow * 2}px rgba(0,0,0,0.6)` : ""}`;
 
   return (
-    <div ref={containerRef} className={"relative w-full overflow-hidden rounded-xl bg-black " + (className ?? "")}>
+    <div ref={containerRef} className={"group relative w-full overflow-hidden rounded-xl bg-black " + (className ?? "")}>
       {videoUrl ? (
         <video
           ref={videoRef}
           src={videoUrl}
           controls
           playsInline
+          controlsList="nofullscreen"
+          disablePictureInPicture
           className="block h-full w-full"
         />
       ) : (
