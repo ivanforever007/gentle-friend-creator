@@ -92,17 +92,17 @@ export async function renderCaptionedVideo(opts: {
     ff.off("progress", progressHandler);
   }
 
-  const data = await ff.readFile(outName);
-  const blob = new Blob([data as Uint8Array], { type: "video/mp4" });
+  const data = (await ff.readFile(outName)) as Uint8Array;
+  // Copy into a fresh ArrayBuffer to satisfy strict Blob typings
+  const buf = new Uint8Array(data.byteLength);
+  buf.set(data);
+  const blob = new Blob([buf.buffer], { type: "video/mp4" });
   // Cleanup
   try {
     await ff.deleteFile(inputName);
     await ff.deleteFile(subName);
     await ff.deleteFile(outName);
   } catch {}
+  void sourceWidth;
   return blob;
 }
-
-// Reference unused vars to satisfy TS strict if needed
-void [sourceWidthMarker];
-const sourceWidthMarker = 0;

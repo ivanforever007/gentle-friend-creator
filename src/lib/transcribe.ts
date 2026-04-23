@@ -81,7 +81,10 @@ async function resample(
     toRate,
   );
   const buf = offline.createBuffer(1, audio.length, fromRate);
-  buf.copyToChannel(audio, 0);
+  // Copy into a fresh Float32Array<ArrayBuffer> for strict typings
+  const safe = new Float32Array(audio.length);
+  safe.set(audio);
+  buf.copyToChannel(safe, 0);
   const src = offline.createBufferSource();
   src.buffer = buf;
   src.connect(offline.destination);
