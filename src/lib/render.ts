@@ -2,16 +2,35 @@
 // Uses the single-threaded core so it works without SharedArrayBuffer / COOP-COEP.
 
 import { FFmpeg } from "@ffmpeg/ffmpeg";
-import { fetchFile } from "@ffmpeg/util";
+import { fetchFile, toBlobURL } from "@ffmpeg/util";
 
 const coreURL = "/ffmpeg/ffmpeg-core.js";
 const wasmURL = "/ffmpeg/ffmpeg-core.wasm";
 
 let ffmpeg: FFmpeg | null = null;
 let loadingPromise: Promise<FFmpeg> | null = null;
+let runtimeAssetPromise: Promise<{ coreURL: string; wasmURL: string }> | null = null;
 
 function toError(err: unknown, fallback: string): Error {
   return err instanceof Error ? err : new Error(typeof err === "string" ? err : fallback);
+}
+
+async function getRuntimeAssetURLs() {
+  if (runtimeAssetPromise) return runtimeAssetPromise;
+  runtimeAssetPromise = Promise.all([
+    toBlobURL(coreURL, "text/javascript"),
+    toBlobURL(wasmURL, "application/wasm"),
+  ])
+    .then(([coreBlobURL, wasmBlobURL]) => ({
+      coreURL: coreBlobURL,
+      wasmURL: wasmBlobURL,
+    }))
+    .catch((err) => {
+      runtimeAssetPromise = null;
+      throw toError(err, "Failed to fetch FFmpeg runtime assets");
+    });
+
+  return runtimeAssetPromise;
 }
 
 export type Resolution = "720p" | "1080p" | "2k" | "4k" | "source";
@@ -35,9 +54,11 @@ export async function getFFmpeg(
         onLog?.(message);
       });
       onLog?.("Loading FFmpeg core (≈25MB, one-time)…");
-      // Load the single-threaded core from same-origin bundled assets.
-      // This avoids production CDN/CORS failures like “failed to import ffmpeg-core.js”.
-      await instance.load({ coreURL, wasmURL });
+      const runtimeAssets = await getRuntimeAssetURLs();
+      // Load the single-threaded core from blob URLs built from same-origin assets.
+      // This avoids worker import failures on preview/published hosts while keeping
+      // the runtime local and free of CDN/CORS issues.
+      await instance.load(runtimeAssets);
       ffmpeg = instance;
       onLog?.("FFmpeg ready");
       return instance;
