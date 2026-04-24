@@ -19,6 +19,9 @@ import { CaptionPreview } from "@/components/CaptionPreview";
 
 export const Route = createFileRoute("/")({
   component: HomePage,
+  // Client-only: this page uses URL.createObjectURL, FFmpeg.wasm, and Whisper —
+  // none of which work during SSR. Disabling SSR avoids hydration mismatches (React #419).
+  ssr: false,
   head: () => ({
     meta: [
       { title: "AutoCaption — Pro Word-Accurate Captions, 20 Viral Styles" },
