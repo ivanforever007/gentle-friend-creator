@@ -2,10 +2,16 @@
 // Uses the single-threaded core so it works without SharedArrayBuffer / COOP-COEP.
 
 import { FFmpeg } from "@ffmpeg/ffmpeg";
-import { fetchFile, toBlobURL } from "@ffmpeg/util";
+import { fetchFile } from "@ffmpeg/util";
+import coreURL from "@ffmpeg/core/dist/umd/ffmpeg-core.js?url";
+import wasmURL from "@ffmpeg/core/dist/umd/ffmpeg-core.wasm?url";
 
 let ffmpeg: FFmpeg | null = null;
 let loadingPromise: Promise<FFmpeg> | null = null;
+
+function toError(err: unknown, fallback: string): Error {
+  return err instanceof Error ? err : new Error(typeof err === "string" ? err : fallback);
+}
 
 export type Resolution = "720p" | "1080p" | "2k" | "4k" | "source";
 
@@ -28,34 +34,15 @@ export async function getFFmpeg(
         onLog?.(message);
       });
       onLog?.("Loading FFmpeg core (≈25MB, one-time)…");
-      // Single-threaded core — no SharedArrayBuffer required, works on any host.
-      // Try multiple CDNs for resilience (unpkg sometimes fails CORS in production).
-      const cdns = [
-        "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd",
-        "https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd",
-      ];
-      let loaded = false;
-      let lastErr: unknown = null;
-      for (const baseURL of cdns) {
-        try {
-          await instance.load({
-            coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
-            wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm"),
-          });
-          loaded = true;
-          break;
-        } catch (err) {
-          lastErr = err;
-          onLog?.(`CDN failed (${baseURL}), trying next…`);
-        }
-      }
-      if (!loaded) throw lastErr ?? new Error("Failed to load FFmpeg core from all CDNs");
+      // Load the single-threaded core from same-origin bundled assets.
+      // This avoids production CDN/CORS failures like “failed to import ffmpeg-core.js”.
+      await instance.load({ coreURL, wasmURL });
       ffmpeg = instance;
       onLog?.("FFmpeg ready");
       return instance;
     } catch (e) {
       loadingPromise = null;
-      throw e;
+      throw toError(e, "Failed to load FFmpeg core");
     }
   })();
   return loadingPromise;
@@ -144,10 +131,11 @@ export async function renderCaptionedVideo(opts: {
   } catch (e) {
     ff.off("progress", progressHandler);
     resetFFmpeg();
+    const err = toError(e, "FFmpeg crashed during render");
     throw new Error(
       "FFmpeg crashed during render. This often means the video is too large for the browser. " +
       "Try a shorter clip or a lower export resolution. " +
-      `(${e instanceof Error ? e.message : String(e)})`,
+      `(${err.message})`,
     );
   }
   ff.off("progress", progressHandler);
