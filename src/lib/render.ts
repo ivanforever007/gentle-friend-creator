@@ -29,11 +29,27 @@ export async function getFFmpeg(
       });
       onLog?.("Loading FFmpeg core (≈25MB, one-time)…");
       // Single-threaded core — no SharedArrayBuffer required, works on any host.
-      const baseURL = "https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd";
-      await instance.load({
-        coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
-        wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm"),
-      });
+      // Try multiple CDNs for resilience (unpkg sometimes fails CORS in production).
+      const cdns = [
+        "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd",
+        "https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd",
+      ];
+      let loaded = false;
+      let lastErr: unknown = null;
+      for (const baseURL of cdns) {
+        try {
+          await instance.load({
+            coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
+            wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm"),
+          });
+          loaded = true;
+          break;
+        } catch (err) {
+          lastErr = err;
+          onLog?.(`CDN failed (${baseURL}), trying next…`);
+        }
+      }
+      if (!loaded) throw lastErr ?? new Error("Failed to load FFmpeg core from all CDNs");
       ffmpeg = instance;
       onLog?.("FFmpeg ready");
       return instance;
@@ -84,7 +100,8 @@ export async function renderCaptionedVideo(opts: {
   if (resolution !== "source") {
     const targetH = RES_HEIGHT[resolution];
     if (targetH !== sourceHeight) {
-      scaleFilter = `scale=-2:${targetH}:flags=lanczos`;
+      // Force even dimensions for libx264. Drop lanczos flag — not always compiled in.
+      scaleFilter = `scale=-2:${targetH}`;
     }
   }
 
@@ -97,21 +114,33 @@ export async function renderCaptionedVideo(opts: {
   };
   ff.on("progress", progressHandler);
 
-  let exitCode: number;
-  try {
-    exitCode = await ff.exec([
+  // Try with audio first; fall back to video-only if the source has no audio track.
+  const buildArgs = (includeAudio: boolean) => {
+    const args = [
       "-i", inputName,
       "-vf", filters,
       "-c:v", "libx264",
-      "-preset", "veryfast",
-      "-crf", "20",
+      "-preset", "ultrafast",
+      "-crf", "23",
       "-pix_fmt", "yuv420p",
-      "-c:a", "aac",
-      "-b:a", "192k",
-      "-movflags", "+faststart",
-      "-y",
-      outName,
-    ]);
+    ];
+    if (includeAudio) {
+      args.push("-c:a", "aac", "-b:a", "192k");
+    } else {
+      args.push("-an");
+    }
+    args.push("-movflags", "+faststart", "-y", outName);
+    return args;
+  };
+
+  let exitCode: number;
+  try {
+    exitCode = await ff.exec(buildArgs(true));
+    if (exitCode !== 0) {
+      onLog?.("Retrying without audio track…");
+      try { await ff.deleteFile(outName); } catch {}
+      exitCode = await ff.exec(buildArgs(false));
+    }
   } catch (e) {
     ff.off("progress", progressHandler);
     resetFFmpeg();
