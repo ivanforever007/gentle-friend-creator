@@ -14,17 +14,36 @@ export type TranscriptionResult = {
 
 let transcriberPromise: Promise<any> | null = null;
 
+async function hasWebGPU(): Promise<boolean> {
+  try {
+    const gpu = (navigator as any).gpu;
+    if (!gpu) return false;
+    const adapter = await gpu.requestAdapter();
+    return !!adapter;
+  } catch {
+    return false;
+  }
+}
+
 export async function getTranscriber(
   onProgress?: (msg: string, pct?: number) => void,
 ) {
   if (!transcriberPromise) {
-    onProgress?.("Loading Whisper model (first time ~75MB)…", 0);
+    const useGPU = await hasWebGPU();
+    onProgress?.(
+      useGPU
+        ? "Loading Whisper Tiny on WebGPU (first time ~40MB)…"
+        : "Loading Whisper Tiny on CPU (first time ~40MB)…",
+      0,
+    );
+    // whisper-tiny is 3-5x faster than whisper-base with similar accuracy for short clips.
+    // fp16 on WebGPU is ~2-3x faster than q8 on wasm.
     transcriberPromise = pipeline(
       "automatic-speech-recognition",
-      "onnx-community/whisper-base_timestamped",
+      "onnx-community/whisper-tiny_timestamped",
       {
-        device: (navigator as any).gpu ? "webgpu" : "wasm",
-        dtype: "q8",
+        device: useGPU ? "webgpu" : "wasm",
+        dtype: useGPU ? "fp16" : "q8",
         progress_callback: (data: any) => {
           if (data.status === "progress" && data.file?.endsWith(".onnx")) {
             onProgress?.(`Downloading model… ${Math.round(data.progress)}%`, data.progress);
@@ -33,7 +52,11 @@ export async function getTranscriber(
           }
         },
       } as any,
-    );
+    ).catch((err) => {
+      // Reset so user can retry without a stale rejected promise
+      transcriberPromise = null;
+      throw err;
+    });
   }
   return transcriberPromise;
 }
