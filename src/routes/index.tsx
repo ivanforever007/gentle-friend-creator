@@ -274,8 +274,43 @@ function HomePage() {
                     <div className="font-mono text-sm text-primary">{progress}%</div>
                   </div>
                   <Progress value={progress} className="h-2" />
+
+                  {stage === "transcribing" && (
+                    <div className="mt-4 grid grid-cols-3 gap-2">
+                      <div className="rounded-lg border border-border/60 bg-background/40 p-2.5">
+                        <div className="mb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                          <Cpu className="h-3 w-3" /> Device
+                        </div>
+                        <div className="font-mono text-xs font-semibold text-foreground">
+                          {device?.label ?? "Detecting…"}
+                        </div>
+                      </div>
+                      <div className="rounded-lg border border-border/60 bg-background/40 p-2.5">
+                        <div className="mb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                          <Gauge className="h-3 w-3" /> Phase
+                        </div>
+                        <div className="font-mono text-xs font-semibold capitalize text-foreground">
+                          {phase ?? "—"}
+                        </div>
+                      </div>
+                      <div className="rounded-lg border border-accent/40 bg-accent/10 p-2.5">
+                        <div className="mb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-accent">
+                          <Timer className="h-3 w-3" /> ETA
+                        </div>
+                        <div className="font-mono text-xs font-semibold text-foreground">
+                          {etaSeconds != null ? formatEta(etaSeconds) : phase === "loading" ? "Loading…" : "Estimating…"}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {stage === "transcribing" && audioDuration != null && (
+                    <div className="mt-2 text-[10px] text-muted-foreground">
+                      Audio: {audioDuration.toFixed(1)}s · ~{device ? device.realtimeFactor : 2}× realtime on this device
+                    </div>
+                  )}
                 </Card>
               ) : null}
+
 
               <div>
                 <div className="mb-3 flex items-center gap-2">
