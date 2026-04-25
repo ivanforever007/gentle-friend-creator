@@ -287,7 +287,7 @@ function HomePage() {
                     {outputUrl && (
                       <a href={outputUrl} download={downloadName} className="block">
                         <Button variant="secondary" className="h-12 w-full font-bold" size="lg">
-                          <Download className="mr-2 h-4 w-4" /> Download MP4
+                          <Download className="mr-2 h-4 w-4" /> Download {outputMeta?.extension?.toUpperCase() ?? "Video"}
                         </Button>
                       </a>
                     )}
