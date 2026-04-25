@@ -323,9 +323,14 @@ export async function renderCaptionedVideoNative(opts: {
   const video = document.createElement("video");
   const sourceUrl = URL.createObjectURL(videoFile);
   video.src = sourceUrl;
-  video.muted = true;
+  // Do NOT mute — muting strips the audio track from createMediaElementSource
+  // in many browsers, which results in a silent exported file. We keep the
+  // element unmuted but route audio only to the recorder (not to speakers).
+  video.muted = false;
+  video.volume = 1;
   video.playsInline = true;
   video.preload = "auto";
+  video.crossOrigin = "anonymous";
 
   await new Promise<void>((resolve, reject) => {
     video.onloadeddata = () => resolve();
