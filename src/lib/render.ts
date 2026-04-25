@@ -199,3 +199,101 @@ export async function renderCaptionedVideo(opts: {
   }
   return blob;
 }
+
+function targetDimensions(
+  resolution: Resolution,
+  sourceWidth: number,
+  sourceHeight: number,
+) {
+  if (resolution === "source") {
+    return { width: makeEven(sourceWidth), height: makeEven(sourceHeight) };
+  }
+
+  const targetH = Math.min(RES_HEIGHT[resolution], sourceHeight || RES_HEIGHT[resolution]);
+  const ratio = sourceWidth && sourceHeight ? sourceWidth / sourceHeight : 16 / 9;
+  return {
+    width: makeEven(Math.round(targetH * ratio)),
+    height: makeEven(targetH),
+  };
+}
+
+function makeEven(value: number) {
+  const safe = Math.max(2, Math.round(value || 2));
+  return safe % 2 === 0 ? safe : safe - 1;
+}
+
+function pickRecorderMimeType() {
+  const options = [
+    "video/webm;codecs=vp9,opus",
+    "video/webm;codecs=vp8,opus",
+    "video/webm",
+  ];
+  return options.find((type) => MediaRecorder.isTypeSupported(type)) ?? "";
+}
+
+function captionLines(words: WordTiming[], style: CaptionStyle) {
+  const lines: WordTiming[][] = [];
+  let current: WordTiming[] = [];
+  for (const word of words) {
+    current.push(word);
+    if (/[.!?]$/.test(word.word) || current.length >= style.maxWordsPerLine) {
+      lines.push(current);
+      current = [];
+    }
+  }
+  if (current.length) lines.push(current);
+  return lines;
+}
+
+function hexToCanvasColor(hex: string | null | undefined) {
+  if (!hex) return "transparent";
+  const h = hex.replace("#", "");
+  if (h.length === 8) {
+    const r = parseInt(h.slice(0, 2), 16);
+    const g = parseInt(h.slice(2, 4), 16);
+    const b = parseInt(h.slice(4, 6), 16);
+    const a = parseInt(h.slice(6, 8), 16) / 255;
+    return `rgba(${r}, ${g}, ${b}, ${a})`;
+  }
+  return hex;
+}
+
+function wrapCanvasText(
+  ctx: CanvasRenderingContext2D,
+  items: { text: string; active: boolean }[],
+  maxWidth: number,
+) {
+  const lines: { text: string; active: boolean }[][] = [[]];
+  for (const item of items) {
+    const current = lines[lines.length - 1];
+    const test = [...current, item].map((part) => part.text).join(" ");
+    if (current.length && ctx.measureText(test).width > maxWidth) {
+      lines.push([item]);
+    } else {
+      current.push(item);
+    }
+  }
+  return lines;
+}
+
+function drawRoundedRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+) {
+  const r = Math.min(radius, width / 2, height / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + width - r, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+  ctx.lineTo(x + width, y + height - r);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+  ctx.lineTo(x + r, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
