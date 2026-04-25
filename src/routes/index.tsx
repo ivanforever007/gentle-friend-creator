@@ -7,10 +7,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
-import { Upload, Sparkles, Download, Wand2, Film, Loader2, Type, Palette, Zap } from "lucide-react";
+import { Upload, Sparkles, Download, Wand2, Film, Loader2, Type, Palette, Zap, Cpu, Gauge, Timer } from "lucide-react";
 
 import { CAPTION_STYLES, type CaptionStyle } from "@/lib/captionStyles";
-import { transcribeFile, type WordTiming } from "@/lib/transcribe";
+import { transcribeFile, detectDeviceInfo, type WordTiming, type DeviceInfo, type ProgressInfo } from "@/lib/transcribe";
 import { buildAss } from "@/lib/assBuilder";
 import { renderCaptionedVideoReliable, type RenderedVideo, type Resolution } from "@/lib/render";
 import { StylePicker } from "@/components/StylePicker";
