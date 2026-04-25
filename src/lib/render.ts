@@ -3,6 +3,8 @@
 
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { fetchFile, toBlobURL } from "@ffmpeg/util";
+import type { CaptionStyle } from "./captionStyles";
+import type { WordTiming } from "./transcribe";
 
 const coreURL = "/ffmpeg/ffmpeg-core.js";
 const wasmURL = "/ffmpeg/ffmpeg-core.wasm";
@@ -40,6 +42,13 @@ const RES_HEIGHT: Record<Exclude<Resolution, "source">, number> = {
   "1080p": 1080,
   "2k": 1440,
   "4k": 2160,
+};
+
+export type RenderedVideo = {
+  blob: Blob;
+  extension: "mp4" | "webm";
+  mimeType: string;
+  renderer: "native" | "ffmpeg";
 };
 
 export async function getFFmpeg(
