@@ -12,7 +12,40 @@ export type TranscriptionResult = {
   words: WordTiming[];
 };
 
+export type DeviceInfo = {
+  device: "webgpu" | "wasm";
+  dtype: "fp16" | "q8";
+  label: string; // human-readable, e.g. "WebGPU · fp16"
+  // Approx realtime factor: seconds of audio processed per wall-clock second.
+  // Tiny model: WebGPU/fp16 ~10x, WASM/q8 ~1.5x (conservative).
+  realtimeFactor: number;
+};
+
+export type ProgressInfo = {
+  phase: "loading" | "decoding" | "transcribing" | "done";
+  message: string;
+  pct?: number;          // 0–100, for the current phase
+  device?: DeviceInfo;
+  audioDuration?: number; // seconds of audio (known after decoding)
+};
+
+export type ProgressCallback = (info: ProgressInfo) => void;
+
 let transcriberPromise: Promise<any> | null = null;
+let cachedDeviceInfo: DeviceInfo | null = null;
+
+export function getCachedDeviceInfo(): DeviceInfo | null {
+  return cachedDeviceInfo;
+}
+
+export async function detectDeviceInfo(): Promise<DeviceInfo> {
+  if (cachedDeviceInfo) return cachedDeviceInfo;
+  const useGPU = await hasWebGPU();
+  cachedDeviceInfo = useGPU
+    ? { device: "webgpu", dtype: "fp16", label: "WebGPU · fp16", realtimeFactor: 10 }
+    : { device: "wasm", dtype: "q8", label: "CPU · q8 (WASM)", realtimeFactor: 1.5 };
+  return cachedDeviceInfo;
+}
 
 async function hasWebGPU(): Promise<boolean> {
   try {
