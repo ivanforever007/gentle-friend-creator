@@ -297,3 +297,190 @@ function drawRoundedRect(
   ctx.quadraticCurveTo(x, y, x + r, y);
   ctx.closePath();
 }
+
+export async function renderCaptionedVideoNative(opts: {
+  videoFile: File;
+  words: WordTiming[];
+  style: CaptionStyle;
+  resolution: Resolution;
+  sourceWidth: number;
+  sourceHeight: number;
+  onProgress?: (ratio: number) => void;
+  onLog?: (msg: string) => void;
+}): Promise<RenderedVideo> {
+  const { videoFile, words, style, resolution, sourceWidth, sourceHeight, onProgress, onLog } = opts;
+  if (!("MediaRecorder" in window)) throw new Error("This browser cannot record video exports.");
+  const mimeType = pickRecorderMimeType();
+  if (!mimeType) throw new Error("This browser has no supported video recorder format.");
+
+  const { width, height } = targetDimensions(resolution, sourceWidth, sourceHeight);
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Could not start the video canvas renderer.");
+
+  const video = document.createElement("video");
+  const sourceUrl = URL.createObjectURL(videoFile);
+  video.src = sourceUrl;
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = "auto";
+
+  await new Promise<void>((resolve, reject) => {
+    video.onloadedmetadata = () => resolve();
+    video.onerror = () => reject(new Error("Could not read this video file."));
+  });
+
+  const stream = canvas.captureStream(30);
+  const chunks: Blob[] = [];
+  const recorder = new MediaRecorder(stream, {
+    mimeType,
+    videoBitsPerSecond: resolution === "4k" ? 12_000_000 : resolution === "2k" ? 8_000_000 : 5_000_000,
+  });
+  recorder.ondataavailable = (event) => {
+    if (event.data.size > 0) chunks.push(event.data);
+  };
+
+  const lines = captionLines(words, style);
+  const duration = video.duration || Math.max(...words.map((word) => word.end), 0);
+  let animationFrame = 0;
+  let stopped = false;
+  onLog?.("Using reliable browser recorder export…");
+
+  const drawFrame = () => {
+    ctx.clearRect(0, 0, width, height);
+    ctx.drawImage(video, 0, 0, width, height);
+
+    const currentTime = video.currentTime;
+    const activeLine = lines.find(
+      (line) => line.length && currentTime >= line[0].start - 0.05 && currentTime <= line[line.length - 1].end + 0.05,
+    );
+
+    if (activeLine) {
+      drawCaption(ctx, activeLine, style, currentTime, width, height);
+    }
+
+    onProgress?.(duration ? Math.min(0.99, currentTime / duration) : 0);
+    if (!stopped && !video.ended) animationFrame = requestAnimationFrame(drawFrame);
+  };
+
+  const finished = new Promise<RenderedVideo>((resolve, reject) => {
+    recorder.onerror = () => reject(new Error("The browser recorder failed while exporting."));
+    recorder.onstop = () => {
+      URL.revokeObjectURL(sourceUrl);
+      if (!chunks.length) {
+        reject(new Error("Export finished but no video data was created."));
+        return;
+      }
+      const blob = new Blob(chunks, { type: mimeType || "video/webm" });
+      resolve({ blob, extension: "webm", mimeType: blob.type, renderer: "native" });
+    };
+  });
+
+  video.onended = () => {
+    stopped = true;
+    cancelAnimationFrame(animationFrame);
+    drawFrame();
+    onProgress?.(1);
+    if (recorder.state !== "inactive") recorder.stop();
+  };
+
+  recorder.start(1000);
+  drawFrame();
+  await video.play();
+  return finished;
+}
+
+function drawCaption(
+  ctx: CanvasRenderingContext2D,
+  line: WordTiming[],
+  style: CaptionStyle,
+  currentTime: number,
+  width: number,
+  height: number,
+) {
+  const fontSize = Math.max(14, Math.round(height * style.fontSizeRatio));
+  const family = style.font.includes(" ") ? `"${style.font}"` : style.font;
+  ctx.font = `${style.italic ? "italic " : ""}${style.bold ? "900" : "500"} ${fontSize}px ${family}, Arial, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineJoin = "round";
+
+  const words = line.map((word) => ({
+    text: style.uppercase ? word.word.toUpperCase() : word.word,
+    active: currentTime >= word.start && currentTime <= word.end,
+  }));
+  const maxTextWidth = width * 0.9;
+  const wrapped = wrapCanvasText(ctx, words, maxTextWidth);
+  const lineHeight = fontSize * 1.18;
+  const blockHeight = wrapped.length * lineHeight;
+  const centerY =
+    style.position === "bottom"
+      ? height - height * style.marginV - blockHeight / 2
+      : style.position === "top"
+        ? height * style.marginV + blockHeight / 2
+        : height / 2;
+  const startY = centerY - blockHeight / 2 + lineHeight / 2;
+
+  if (style.bg) {
+    const widest = Math.max(...wrapped.map((parts) => ctx.measureText(parts.map((part) => part.text).join(" ")).width));
+    const padX = Math.max(10, style.bgPadding * (height / 720));
+    const padY = Math.max(6, padX * 0.55);
+    drawRoundedRect(
+      ctx,
+      width / 2 - widest / 2 - padX,
+      centerY - blockHeight / 2 - padY,
+      widest + padX * 2,
+      blockHeight + padY * 2,
+      Math.max(6, padX * 0.65),
+    );
+    ctx.fillStyle = hexToCanvasColor(style.bg);
+    ctx.fill();
+  }
+
+  wrapped.forEach((parts, lineIndex) => {
+    const totalWidth = ctx.measureText(parts.map((part) => part.text).join(" ")).width;
+    let x = width / 2 - totalWidth / 2;
+    const y = startY + lineIndex * lineHeight;
+    parts.forEach((part, index) => {
+      const prefix = index === 0 ? "" : " ";
+      const text = `${prefix}${part.text}`;
+      const metrics = ctx.measureText(text);
+      const drawX = x + metrics.width / 2;
+      ctx.strokeStyle = style.outline;
+      ctx.lineWidth = style.bg ? 0 : Math.max(0, style.outlineWidth * (height / 720));
+      if (style.shadow && !style.bg) {
+        ctx.shadowColor = "rgba(0,0,0,0.65)";
+        ctx.shadowBlur = style.shadow * (height / 360);
+        ctx.shadowOffsetY = style.shadow * (height / 720);
+      }
+      if (ctx.lineWidth > 0) ctx.strokeText(text, drawX, y);
+      ctx.shadowColor = "transparent";
+      ctx.fillStyle = style.highlightMode !== "none" && part.active ? style.highlight : style.primary;
+      ctx.fillText(text, drawX, y);
+      x += metrics.width;
+    });
+  });
+}
+
+export async function renderCaptionedVideoReliable(opts: {
+  videoFile: File;
+  assText: string;
+  words: WordTiming[];
+  style: CaptionStyle;
+  resolution: Resolution;
+  sourceWidth: number;
+  sourceHeight: number;
+  onProgress?: (ratio: number) => void;
+  onLog?: (msg: string) => void;
+}): Promise<RenderedVideo> {
+  try {
+    const blob = await renderCaptionedVideo(opts);
+    return { blob, extension: "mp4", mimeType: "video/mp4", renderer: "ffmpeg" };
+  } catch (error) {
+    opts.onLog?.(`FFmpeg export failed; switching to browser recorder. ${toError(error, "Unknown error").message}`);
+    opts.onProgress?.(0);
+    return renderCaptionedVideoNative(opts);
+  }
+}
