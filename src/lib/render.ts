@@ -328,7 +328,7 @@ export async function renderCaptionedVideoNative(opts: {
   video.preload = "auto";
 
   await new Promise<void>((resolve, reject) => {
-    video.onloadedmetadata = () => resolve();
+    video.onloadeddata = () => resolve();
     video.onerror = () => reject(new Error("Could not read this video file."));
   });
 
@@ -399,9 +399,18 @@ export async function renderCaptionedVideoNative(opts: {
   };
 
   if (audioContext?.state === "suspended") await audioContext.resume().catch(() => {});
-  recorder.start(1000);
-  drawFrame();
-  await video.play();
+  try {
+    recorder.start(1000);
+    drawFrame();
+    await video.play();
+  } catch (error) {
+    stopped = true;
+    cancelAnimationFrame(animationFrame);
+    if (recorder.state !== "inactive") recorder.stop();
+    URL.revokeObjectURL(sourceUrl);
+    audioContext?.close().catch(() => {});
+    throw toError(error, "Could not start native video export");
+  }
   return finished;
 }
 
