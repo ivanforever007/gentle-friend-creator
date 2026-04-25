@@ -103,9 +103,20 @@ function HomePage() {
       setStage("transcribing");
       setProgress(5);
       setStatusMsg("Loading model…");
-      const result = await transcribeFile(file, (msg, pct) => {
-        setStatusMsg(msg);
-        if (typeof pct === "number") setProgress(Math.max(5, Math.min(95, pct)));
+      setPhase("loading");
+      setAudioDuration(null);
+      setTranscribeStartedAt(null);
+      const result = await transcribeFile(file, (info) => {
+        setStatusMsg(info.message);
+        setPhase(info.phase);
+        if (info.device) setDevice(info.device);
+        if (typeof info.audioDuration === "number") setAudioDuration(info.audioDuration);
+        if (info.phase === "transcribing" && transcribeStartedAt === null) {
+          setTranscribeStartedAt(performance.now());
+        }
+        if (typeof info.pct === "number") {
+          setProgress(Math.max(5, Math.min(95, info.pct)));
+        }
       });
       if (!result.words.length) {
         toast.error("No speech detected in this video");
@@ -115,14 +126,17 @@ function HomePage() {
       setWords(result.words);
       setStage("ready");
       setProgress(100);
+      setPhase("done");
       setStatusMsg(`Transcribed ${result.words.length} words`);
       toast.success(`Detected ${result.words.length} words`);
     } catch (e) {
       console.error(e);
       toast.error("Transcription failed", { description: e instanceof Error ? e.message : "Unknown error" });
       setStage("idle");
+      setPhase(null);
     }
-  }, [file]);
+  }, [file, transcribeStartedAt]);
+
 
   const handleRender = useCallback(async () => {
     if (!file || !words.length) return;
