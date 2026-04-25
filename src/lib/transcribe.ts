@@ -151,18 +151,28 @@ async function resample(
 
 export async function transcribeFile(
   file: File,
-  onProgress?: (msg: string, pct?: number) => void,
+  onProgress?: ProgressCallback,
 ): Promise<TranscriptionResult> {
   const transcriber = await getTranscriber(onProgress);
-  onProgress?.("Decoding audio…", 0);
+  const device = await detectDeviceInfo();
+  onProgress?.({ phase: "decoding", message: "Decoding audio…", pct: 0, device });
   const audio = await decodeAudioFromFile(file);
-  onProgress?.("Transcribing… (this can take a minute)", 0);
+  const audioDuration = audio.length / 16000;
+  onProgress?.({
+    phase: "transcribing",
+    message: "Transcribing…",
+    pct: 0,
+    device,
+    audioDuration,
+  });
 
   const output: any = await transcriber(audio, {
     return_timestamps: "word",
     chunk_length_s: 30,
     stride_length_s: 5,
   });
+  onProgress?.({ phase: "done", message: "Done", pct: 100, device, audioDuration });
+
 
   const chunks: any[] = output.chunks ?? [];
   const words: WordTiming[] = chunks
