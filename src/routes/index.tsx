@@ -47,7 +47,26 @@ function HomePage() {
   const [outputUrl, setOutputUrl] = useState<string | null>(null);
   const [outputMeta, setOutputMeta] = useState<Pick<RenderedVideo, "extension" | "renderer"> | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
+  const [device, setDevice] = useState<DeviceInfo | null>(null);
+  const [phase, setPhase] = useState<ProgressInfo["phase"] | null>(null);
+  const [audioDuration, setAudioDuration] = useState<number | null>(null);
+  const [transcribeStartedAt, setTranscribeStartedAt] = useState<number | null>(null);
+  const [nowTick, setNowTick] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Tick once a second while transcribing so ETA updates live.
+  useMemo(() => {
+    if (typeof window === "undefined") return;
+    if (stage !== "transcribing") return;
+    const id = window.setInterval(() => setNowTick((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [stage]);
+
+  // Detect device on mount so we can show it before transcription starts.
+  if (typeof window !== "undefined" && device === null) {
+    detectDeviceInfo().then((d) => setDevice((prev) => prev ?? d)).catch(() => {});
+  }
+
 
   const onFile = useCallback(async (f: File) => {
     if (!f.type.startsWith("video/")) {
