@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -7,10 +7,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
-import { Upload, Sparkles, Download, Wand2, Film, Loader2, Type, Palette, Zap, Cpu, Gauge, Timer } from "lucide-react";
+import { Upload, Sparkles, Download, Wand2, Film, Loader2, Type, Palette, Zap } from "lucide-react";
 
 import { CAPTION_STYLES, type CaptionStyle } from "@/lib/captionStyles";
-import { transcribeFile, detectDeviceInfo, type WordTiming, type DeviceInfo, type ProgressInfo } from "@/lib/transcribe";
+import { transcribeFile, type WordTiming } from "@/lib/transcribe";
 import { buildAss } from "@/lib/assBuilder";
 import { renderCaptionedVideoReliable, type RenderedVideo, type Resolution } from "@/lib/render";
 import { StylePicker } from "@/components/StylePicker";
@@ -47,27 +47,7 @@ function HomePage() {
   const [outputUrl, setOutputUrl] = useState<string | null>(null);
   const [outputMeta, setOutputMeta] = useState<Pick<RenderedVideo, "extension" | "renderer"> | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
-  const [device, setDevice] = useState<DeviceInfo | null>(null);
-  const [phase, setPhase] = useState<ProgressInfo["phase"] | null>(null);
-  const [audioDuration, setAudioDuration] = useState<number | null>(null);
-  const [transcribeStartedAt, setTranscribeStartedAt] = useState<number | null>(null);
-  const [nowTick, setNowTick] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
-
-  // Tick once a second while transcribing so ETA updates live.
-  useEffect(() => {
-    if (stage !== "transcribing") return;
-    const id = window.setInterval(() => setNowTick((n) => n + 1), 1000);
-    return () => window.clearInterval(id);
-  }, [stage]);
-
-  // Detect device on mount so we can show it before transcription starts.
-  useEffect(() => {
-    let cancelled = false;
-    detectDeviceInfo().then((d) => { if (!cancelled) setDevice(d); }).catch(() => {});
-    return () => { cancelled = true; };
-  }, []);
-
 
   const onFile = useCallback(async (f: File) => {
     if (!f.type.startsWith("video/")) {
@@ -103,20 +83,9 @@ function HomePage() {
       setStage("transcribing");
       setProgress(5);
       setStatusMsg("Loading model…");
-      setPhase("loading");
-      setAudioDuration(null);
-      setTranscribeStartedAt(null);
-      const result = await transcribeFile(file, (info) => {
-        setStatusMsg(info.message);
-        setPhase(info.phase);
-        if (info.device) setDevice(info.device);
-        if (typeof info.audioDuration === "number") setAudioDuration(info.audioDuration);
-        if (info.phase === "transcribing" && transcribeStartedAt === null) {
-          setTranscribeStartedAt(performance.now());
-        }
-        if (typeof info.pct === "number") {
-          setProgress(Math.max(5, Math.min(95, info.pct)));
-        }
+      const result = await transcribeFile(file, (msg, pct) => {
+        setStatusMsg(msg);
+        if (typeof pct === "number") setProgress(Math.max(5, Math.min(95, pct)));
       });
       if (!result.words.length) {
         toast.error("No speech detected in this video");
@@ -126,17 +95,14 @@ function HomePage() {
       setWords(result.words);
       setStage("ready");
       setProgress(100);
-      setPhase("done");
       setStatusMsg(`Transcribed ${result.words.length} words`);
       toast.success(`Detected ${result.words.length} words`);
     } catch (e) {
       console.error(e);
       toast.error("Transcription failed", { description: e instanceof Error ? e.message : "Unknown error" });
       setStage("idle");
-      setPhase(null);
     }
-  }, [file, transcribeStartedAt]);
-
+  }, [file]);
 
   const handleRender = useCallback(async () => {
     if (!file || !words.length) return;
@@ -183,33 +149,6 @@ function HomePage() {
     const base = file?.name.replace(/\.[^.]+$/, "") ?? "captioned";
     return `${base}-${style.id}-${resolution}.${outputMeta?.extension ?? "mp4"}`;
   }, [file, style.id, resolution, outputMeta?.extension]);
-
-  // Estimated remaining time (seconds) for the transcription phase.
-  // Combines a static estimate (audio duration / device realtime factor) with a
-  // live estimate based on observed elapsed time vs. progress percentage.
-  const etaSeconds = useMemo(() => {
-    if (stage !== "transcribing" || phase !== "transcribing") return null;
-    void nowTick; // re-evaluate every tick
-    const rtFactor = device?.realtimeFactor ?? 2;
-    const staticEta = audioDuration != null ? audioDuration / rtFactor : null;
-    let liveEta: number | null = null;
-    if (transcribeStartedAt != null && progress > 5) {
-      const elapsed = (performance.now() - transcribeStartedAt) / 1000;
-      const frac = Math.min(0.95, Math.max(0.05, progress / 100));
-      liveEta = (elapsed / frac) * (1 - frac);
-    }
-    if (liveEta != null && staticEta != null) return liveEta * 0.7 + staticEta * 0.3;
-    return liveEta ?? staticEta;
-  }, [stage, phase, device, audioDuration, transcribeStartedAt, progress, nowTick]);
-
-  const formatEta = (s: number) => {
-    if (!isFinite(s) || s < 0) return "—";
-    if (s < 1) return "<1s";
-    if (s < 60) return `${Math.ceil(s)}s`;
-    const m = Math.floor(s / 60);
-    const sec = Math.ceil(s % 60);
-    return `${m}m ${sec}s`;
-  };
 
   return (
     <div className="min-h-screen bg-background bg-gradient-glow">
@@ -274,43 +213,8 @@ function HomePage() {
                     <div className="font-mono text-sm text-primary">{progress}%</div>
                   </div>
                   <Progress value={progress} className="h-2" />
-
-                  {stage === "transcribing" && (
-                    <div className="mt-4 grid grid-cols-3 gap-2">
-                      <div className="rounded-lg border border-border/60 bg-background/40 p-2.5">
-                        <div className="mb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                          <Cpu className="h-3 w-3" /> Device
-                        </div>
-                        <div className="font-mono text-xs font-semibold text-foreground">
-                          {device?.label ?? "Detecting…"}
-                        </div>
-                      </div>
-                      <div className="rounded-lg border border-border/60 bg-background/40 p-2.5">
-                        <div className="mb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                          <Gauge className="h-3 w-3" /> Phase
-                        </div>
-                        <div className="font-mono text-xs font-semibold capitalize text-foreground">
-                          {phase ?? "—"}
-                        </div>
-                      </div>
-                      <div className="rounded-lg border border-accent/40 bg-accent/10 p-2.5">
-                        <div className="mb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-accent">
-                          <Timer className="h-3 w-3" /> ETA
-                        </div>
-                        <div className="font-mono text-xs font-semibold text-foreground">
-                          {etaSeconds != null ? formatEta(etaSeconds) : phase === "loading" ? "Loading…" : "Estimating…"}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  {stage === "transcribing" && audioDuration != null && (
-                    <div className="mt-2 text-[10px] text-muted-foreground">
-                      Audio: {audioDuration.toFixed(1)}s · ~{device ? device.realtimeFactor : 2}× realtime on this device
-                    </div>
-                  )}
                 </Card>
               ) : null}
-
 
               <div>
                 <div className="mb-3 flex items-center gap-2">
