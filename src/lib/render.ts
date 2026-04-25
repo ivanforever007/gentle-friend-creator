@@ -333,6 +333,17 @@ export async function renderCaptionedVideoNative(opts: {
   });
 
   const stream = canvas.captureStream(30);
+  let audioContext: AudioContext | null = null;
+  try {
+    const AudioCtx: typeof AudioContext = (window as any).AudioContext || (window as any).webkitAudioContext;
+    audioContext = new AudioCtx();
+    const audioSource = audioContext.createMediaElementSource(video);
+    const audioDestination = audioContext.createMediaStreamDestination();
+    audioSource.connect(audioDestination);
+    for (const track of audioDestination.stream.getAudioTracks()) stream.addTrack(track);
+  } catch {
+    onLog?.("Exporting without source audio track…");
+  }
   const chunks: Blob[] = [];
   const recorder = new MediaRecorder(stream, {
     mimeType,
@@ -369,6 +380,7 @@ export async function renderCaptionedVideoNative(opts: {
     recorder.onerror = () => reject(new Error("The browser recorder failed while exporting."));
     recorder.onstop = () => {
       URL.revokeObjectURL(sourceUrl);
+      audioContext?.close().catch(() => {});
       if (!chunks.length) {
         reject(new Error("Export finished but no video data was created."));
         return;
@@ -386,6 +398,7 @@ export async function renderCaptionedVideoNative(opts: {
     if (recorder.state !== "inactive") recorder.stop();
   };
 
+  if (audioContext?.state === "suspended") await audioContext.resume().catch(() => {});
   recorder.start(1000);
   drawFrame();
   await video.play();
@@ -476,11 +489,11 @@ export async function renderCaptionedVideoReliable(opts: {
   onLog?: (msg: string) => void;
 }): Promise<RenderedVideo> {
   try {
+    return await renderCaptionedVideoNative(opts);
+  } catch (error) {
+    opts.onLog?.(`Browser recorder failed; trying MP4 renderer. ${toError(error, "Unknown error").message}`);
+    opts.onProgress?.(0);
     const blob = await renderCaptionedVideo(opts);
     return { blob, extension: "mp4", mimeType: "video/mp4", renderer: "ffmpeg" };
-  } catch (error) {
-    opts.onLog?.(`FFmpeg export failed; switching to browser recorder. ${toError(error, "Unknown error").message}`);
-    opts.onProgress?.(0);
-    return renderCaptionedVideoNative(opts);
   }
 }
