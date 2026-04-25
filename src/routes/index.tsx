@@ -184,6 +184,33 @@ function HomePage() {
     return `${base}-${style.id}-${resolution}.${outputMeta?.extension ?? "mp4"}`;
   }, [file, style.id, resolution, outputMeta?.extension]);
 
+  // Estimated remaining time (seconds) for the transcription phase.
+  // Combines a static estimate (audio duration / device realtime factor) with a
+  // live estimate based on observed elapsed time vs. progress percentage.
+  const etaSeconds = useMemo(() => {
+    if (stage !== "transcribing" || phase !== "transcribing") return null;
+    void nowTick; // re-evaluate every tick
+    const rtFactor = device?.realtimeFactor ?? 2;
+    const staticEta = audioDuration != null ? audioDuration / rtFactor : null;
+    let liveEta: number | null = null;
+    if (transcribeStartedAt != null && progress > 5) {
+      const elapsed = (performance.now() - transcribeStartedAt) / 1000;
+      const frac = Math.min(0.95, Math.max(0.05, progress / 100));
+      liveEta = (elapsed / frac) * (1 - frac);
+    }
+    if (liveEta != null && staticEta != null) return liveEta * 0.7 + staticEta * 0.3;
+    return liveEta ?? staticEta;
+  }, [stage, phase, device, audioDuration, transcribeStartedAt, progress, nowTick]);
+
+  const formatEta = (s: number) => {
+    if (!isFinite(s) || s < 0) return "—";
+    if (s < 1) return "<1s";
+    if (s < 60) return `${Math.ceil(s)}s`;
+    const m = Math.floor(s / 60);
+    const sec = Math.ceil(s % 60);
+    return `${m}m ${sec}s`;
+  };
+
   return (
     <div className="min-h-screen bg-background bg-gradient-glow">
       <Toaster theme="dark" position="top-center" richColors />
