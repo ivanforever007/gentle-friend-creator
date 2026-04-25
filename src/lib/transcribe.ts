@@ -12,7 +12,40 @@ export type TranscriptionResult = {
   words: WordTiming[];
 };
 
+export type DeviceInfo = {
+  device: "webgpu" | "wasm";
+  dtype: "fp16" | "q8";
+  label: string; // human-readable, e.g. "WebGPU · fp16"
+  // Approx realtime factor: seconds of audio processed per wall-clock second.
+  // Tiny model: WebGPU/fp16 ~10x, WASM/q8 ~1.5x (conservative).
+  realtimeFactor: number;
+};
+
+export type ProgressInfo = {
+  phase: "loading" | "decoding" | "transcribing" | "done";
+  message: string;
+  pct?: number;          // 0–100, for the current phase
+  device?: DeviceInfo;
+  audioDuration?: number; // seconds of audio (known after decoding)
+};
+
+export type ProgressCallback = (info: ProgressInfo) => void;
+
 let transcriberPromise: Promise<any> | null = null;
+let cachedDeviceInfo: DeviceInfo | null = null;
+
+export function getCachedDeviceInfo(): DeviceInfo | null {
+  return cachedDeviceInfo;
+}
+
+export async function detectDeviceInfo(): Promise<DeviceInfo> {
+  if (cachedDeviceInfo) return cachedDeviceInfo;
+  const useGPU = await hasWebGPU();
+  cachedDeviceInfo = useGPU
+    ? { device: "webgpu", dtype: "fp16", label: "WebGPU · fp16", realtimeFactor: 10 }
+    : { device: "wasm", dtype: "q8", label: "CPU · q8 (WASM)", realtimeFactor: 1.5 };
+  return cachedDeviceInfo;
+}
 
 async function hasWebGPU(): Promise<boolean> {
   try {
@@ -25,35 +58,35 @@ async function hasWebGPU(): Promise<boolean> {
   }
 }
 
-export async function getTranscriber(
-  onProgress?: (msg: string, pct?: number) => void,
-) {
+export async function getTranscriber(onProgress?: ProgressCallback) {
   if (!transcriberPromise) {
-    const useGPU = await hasWebGPU();
-    onProgress?.(
-      useGPU
-        ? "Loading Whisper Tiny on WebGPU (first time ~40MB)…"
-        : "Loading Whisper Tiny on CPU (first time ~40MB)…",
-      0,
-    );
-    // whisper-tiny is 3-5x faster than whisper-base with similar accuracy for short clips.
-    // fp16 on WebGPU is ~2-3x faster than q8 on wasm.
+    const info = await detectDeviceInfo();
+    onProgress?.({
+      phase: "loading",
+      message: `Loading Whisper Tiny on ${info.label} (first time ~40MB)…`,
+      pct: 0,
+      device: info,
+    });
     transcriberPromise = pipeline(
       "automatic-speech-recognition",
       "onnx-community/whisper-tiny_timestamped",
       {
-        device: useGPU ? "webgpu" : "wasm",
-        dtype: useGPU ? "fp16" : "q8",
+        device: info.device,
+        dtype: info.dtype,
         progress_callback: (data: any) => {
           if (data.status === "progress" && data.file?.endsWith(".onnx")) {
-            onProgress?.(`Downloading model… ${Math.round(data.progress)}%`, data.progress);
+            onProgress?.({
+              phase: "loading",
+              message: `Downloading model… ${Math.round(data.progress)}%`,
+              pct: data.progress,
+              device: info,
+            });
           } else if (data.status === "done") {
-            onProgress?.("Model loaded", 100);
+            onProgress?.({ phase: "loading", message: "Model loaded", pct: 100, device: info });
           }
         },
       } as any,
     ).catch((err) => {
-      // Reset so user can retry without a stale rejected promise
       transcriberPromise = null;
       throw err;
     });
@@ -118,18 +151,28 @@ async function resample(
 
 export async function transcribeFile(
   file: File,
-  onProgress?: (msg: string, pct?: number) => void,
+  onProgress?: ProgressCallback,
 ): Promise<TranscriptionResult> {
   const transcriber = await getTranscriber(onProgress);
-  onProgress?.("Decoding audio…", 0);
+  const device = await detectDeviceInfo();
+  onProgress?.({ phase: "decoding", message: "Decoding audio…", pct: 0, device });
   const audio = await decodeAudioFromFile(file);
-  onProgress?.("Transcribing… (this can take a minute)", 0);
+  const audioDuration = audio.length / 16000;
+  onProgress?.({
+    phase: "transcribing",
+    message: "Transcribing…",
+    pct: 0,
+    device,
+    audioDuration,
+  });
 
   const output: any = await transcriber(audio, {
     return_timestamps: "word",
     chunk_length_s: 30,
     stride_length_s: 5,
   });
+  onProgress?.({ phase: "done", message: "Done", pct: 100, device, audioDuration });
+
 
   const chunks: any[] = output.chunks ?? [];
   const words: WordTiming[] = chunks
