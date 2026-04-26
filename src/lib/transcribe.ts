@@ -13,27 +13,54 @@ export type TranscriptionResult = {
 };
 
 let transcriberPromise: Promise<any> | null = null;
+let transcriberDevice: "webgpu" | "wasm" = "wasm";
+
+async function detectWebGPU(): Promise<boolean> {
+  try {
+    const gpu = (navigator as any).gpu;
+    if (!gpu) return false;
+    const adapter = await gpu.requestAdapter();
+    return !!adapter;
+  } catch {
+    return false;
+  }
+}
 
 export async function getTranscriber(
   onProgress?: (msg: string, pct?: number) => void,
 ) {
   if (!transcriberPromise) {
-    onProgress?.("Loading Whisper model (first time ~75MB)…", 0);
+    const hasWebGPU = await detectWebGPU();
+    transcriberDevice = hasWebGPU ? "webgpu" : "wasm";
+    console.log("[transcribe] device:", transcriberDevice);
+    onProgress?.(
+      `Loading Whisper tiny model (~40MB) on ${transcriberDevice.toUpperCase()}…`,
+      0,
+    );
     transcriberPromise = pipeline(
       "automatic-speech-recognition",
-      "onnx-community/whisper-base_timestamped",
+      "onnx-community/whisper-tiny_timestamped",
       {
-        device: (navigator as any).gpu ? "webgpu" : "wasm",
-        dtype: "q8",
+        device: transcriberDevice,
+        dtype: hasWebGPU ? "fp32" : "q8",
         progress_callback: (data: any) => {
-          if (data.status === "progress" && data.file?.endsWith(".onnx")) {
-            onProgress?.(`Downloading model… ${Math.round(data.progress)}%`, data.progress);
+          if (data.status === "progress") {
+            const pct = Math.round(data.progress ?? 0);
+            const file = data.file ? ` ${data.file}` : "";
+            onProgress?.(`Downloading model${file}… ${pct}%`, pct);
+            console.log("[transcribe] download", file, pct + "%");
           } else if (data.status === "done") {
+            console.log("[transcribe] file ready:", data.file);
+          } else if (data.status === "ready") {
             onProgress?.("Model loaded", 100);
+            console.log("[transcribe] model ready");
           }
         },
       } as any,
-    );
+    ).catch((err) => {
+      transcriberPromise = null;
+      throw err;
+    });
   }
   return transcriberPromise;
 }
@@ -97,16 +124,39 @@ export async function transcribeFile(
   file: File,
   onProgress?: (msg: string, pct?: number) => void,
 ): Promise<TranscriptionResult> {
+  console.log("[transcribe] start", file.name, file.size);
   const transcriber = await getTranscriber(onProgress);
-  onProgress?.("Decoding audio…", 0);
+  onProgress?.("Decoding audio…", 5);
+  console.log("[transcribe] decoding audio");
   const audio = await decodeAudioFromFile(file);
-  onProgress?.("Transcribing… (this can take a minute)", 0);
+  const seconds = audio.length / 16000;
+  console.log("[transcribe] decoded", seconds.toFixed(1), "s of audio");
+  onProgress?.(
+    `Transcribing ${seconds.toFixed(0)}s of audio on ${transcriberDevice.toUpperCase()}…`,
+    10,
+  );
 
-  const output: any = await transcriber(audio, {
-    return_timestamps: "word",
-    chunk_length_s: 30,
-    stride_length_s: 5,
-  });
+  // Heartbeat so the UI doesn't appear frozen during the long inference call
+  let pct = 10;
+  const heartbeat = setInterval(() => {
+    pct = Math.min(90, pct + 2);
+    onProgress?.(
+      `Transcribing… (${transcriberDevice.toUpperCase()}, ${seconds.toFixed(0)}s audio)`,
+      pct,
+    );
+  }, 1500);
+
+  let output: any;
+  try {
+    output = await transcriber(audio, {
+      return_timestamps: "word",
+      chunk_length_s: 30,
+      stride_length_s: 5,
+    });
+  } finally {
+    clearInterval(heartbeat);
+  }
+  console.log("[transcribe] done, chunks:", output?.chunks?.length);
 
   const chunks: any[] = output.chunks ?? [];
   const words: WordTiming[] = chunks
