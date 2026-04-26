@@ -124,16 +124,39 @@ export async function transcribeFile(
   file: File,
   onProgress?: (msg: string, pct?: number) => void,
 ): Promise<TranscriptionResult> {
+  console.log("[transcribe] start", file.name, file.size);
   const transcriber = await getTranscriber(onProgress);
-  onProgress?.("Decoding audio…", 0);
+  onProgress?.("Decoding audio…", 5);
+  console.log("[transcribe] decoding audio");
   const audio = await decodeAudioFromFile(file);
-  onProgress?.("Transcribing… (this can take a minute)", 0);
+  const seconds = audio.length / 16000;
+  console.log("[transcribe] decoded", seconds.toFixed(1), "s of audio");
+  onProgress?.(
+    `Transcribing ${seconds.toFixed(0)}s of audio on ${transcriberDevice.toUpperCase()}…`,
+    10,
+  );
 
-  const output: any = await transcriber(audio, {
-    return_timestamps: "word",
-    chunk_length_s: 30,
-    stride_length_s: 5,
-  });
+  // Heartbeat so the UI doesn't appear frozen during the long inference call
+  let pct = 10;
+  const heartbeat = setInterval(() => {
+    pct = Math.min(90, pct + 2);
+    onProgress?.(
+      `Transcribing… (${transcriberDevice.toUpperCase()}, ${seconds.toFixed(0)}s audio)`,
+      pct,
+    );
+  }, 1500);
+
+  let output: any;
+  try {
+    output = await transcriber(audio, {
+      return_timestamps: "word",
+      chunk_length_s: 30,
+      stride_length_s: 5,
+    });
+  } finally {
+    clearInterval(heartbeat);
+  }
+  console.log("[transcribe] done, chunks:", output?.chunks?.length);
 
   const chunks: any[] = output.chunks ?? [];
   const words: WordTiming[] = chunks
