@@ -12,7 +12,7 @@ import { Upload, Sparkles, Download, Wand2, Film, Loader2, Type, Palette, Zap } 
 import { CAPTION_STYLES, type CaptionStyle } from "@/lib/captionStyles";
 import { transcribeFile, type WordTiming } from "@/lib/transcribe";
 import { buildAss } from "@/lib/assBuilder";
-import { renderCaptionedVideoReliable, type RenderedVideo, type Resolution } from "@/lib/render";
+import { renderCaptionedVideo, type Resolution } from "@/lib/render";
 import { StylePicker } from "@/components/StylePicker";
 import { StyleControls } from "@/components/StyleControls";
 import { CaptionPreview } from "@/components/CaptionPreview";
@@ -45,7 +45,6 @@ function HomePage() {
   const [progress, setProgress] = useState(0);
   const [statusMsg, setStatusMsg] = useState("");
   const [outputUrl, setOutputUrl] = useState<string | null>(null);
-  const [outputMeta, setOutputMeta] = useState<Pick<RenderedVideo, "extension" | "renderer"> | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -55,7 +54,7 @@ function HomePage() {
       return;
     }
     if (videoUrl) URL.revokeObjectURL(videoUrl);
-    if (outputUrl) { URL.revokeObjectURL(outputUrl); setOutputUrl(null); setOutputMeta(null); }
+    if (outputUrl) { URL.revokeObjectURL(outputUrl); setOutputUrl(null); }
     const url = URL.createObjectURL(f);
     setFile(f);
     setVideoUrl(url);
@@ -111,15 +110,13 @@ function HomePage() {
       setProgress(0);
       setStatusMsg("Preparing renderer…");
       setLogs([]);
-      if (outputUrl) { URL.revokeObjectURL(outputUrl); setOutputUrl(null); setOutputMeta(null); }
+      if (outputUrl) { URL.revokeObjectURL(outputUrl); setOutputUrl(null); }
 
       const ass = buildAss(words, style, videoDims.w, videoDims.h);
 
-      const rendered = await renderCaptionedVideoReliable({
+      const blob = await renderCaptionedVideo({
         videoFile: file,
         assText: ass,
-        words,
-        style,
         resolution,
         sourceWidth: videoDims.w,
         sourceHeight: videoDims.h,
@@ -130,14 +127,11 @@ function HomePage() {
         onLog: (m) => setLogs((prev) => [...prev.slice(-50), m]),
       });
 
-      const url = URL.createObjectURL(rendered.blob);
+      const url = URL.createObjectURL(blob);
       setOutputUrl(url);
-      setOutputMeta({ extension: rendered.extension, renderer: rendered.renderer });
       setStage("done");
       setStatusMsg("Done!");
-      toast.success("Video ready to download", {
-        description: rendered.renderer === "native" ? "Used fallback exporter with burned-in captions." : undefined,
-      });
+      toast.success("Video ready to download with captions burned in");
     } catch (e) {
       console.error(e);
       toast.error("Render failed", { description: e instanceof Error ? e.message : "Unknown error" });
@@ -147,8 +141,8 @@ function HomePage() {
 
   const downloadName = useMemo(() => {
     const base = file?.name.replace(/\.[^.]+$/, "") ?? "captioned";
-    return `${base}-${style.id}-${resolution}.${outputMeta?.extension ?? "mp4"}`;
-  }, [file, style.id, resolution, outputMeta?.extension]);
+    return `${base}-${style.id}-${resolution}.mp4`;
+  }, [file, style.id, resolution]);
 
   return (
     <div className="min-h-screen bg-background bg-gradient-glow">
@@ -287,7 +281,7 @@ function HomePage() {
                     {outputUrl && (
                       <a href={outputUrl} download={downloadName} className="block">
                         <Button variant="secondary" className="h-12 w-full font-bold" size="lg">
-                          <Download className="mr-2 h-4 w-4" /> Download {outputMeta?.extension?.toUpperCase() ?? "Video"}
+                          <Download className="mr-2 h-4 w-4" /> Download MP4
                         </Button>
                       </a>
                     )}
