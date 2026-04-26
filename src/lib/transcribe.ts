@@ -13,27 +13,54 @@ export type TranscriptionResult = {
 };
 
 let transcriberPromise: Promise<any> | null = null;
+let transcriberDevice: "webgpu" | "wasm" = "wasm";
+
+async function detectWebGPU(): Promise<boolean> {
+  try {
+    const gpu = (navigator as any).gpu;
+    if (!gpu) return false;
+    const adapter = await gpu.requestAdapter();
+    return !!adapter;
+  } catch {
+    return false;
+  }
+}
 
 export async function getTranscriber(
   onProgress?: (msg: string, pct?: number) => void,
 ) {
   if (!transcriberPromise) {
-    onProgress?.("Loading Whisper model (first time ~75MB)…", 0);
+    const hasWebGPU = await detectWebGPU();
+    transcriberDevice = hasWebGPU ? "webgpu" : "wasm";
+    console.log("[transcribe] device:", transcriberDevice);
+    onProgress?.(
+      `Loading Whisper tiny model (~40MB) on ${transcriberDevice.toUpperCase()}…`,
+      0,
+    );
     transcriberPromise = pipeline(
       "automatic-speech-recognition",
-      "onnx-community/whisper-base_timestamped",
+      "onnx-community/whisper-tiny_timestamped",
       {
-        device: (navigator as any).gpu ? "webgpu" : "wasm",
-        dtype: "q8",
+        device: transcriberDevice,
+        dtype: hasWebGPU ? "fp32" : "q8",
         progress_callback: (data: any) => {
-          if (data.status === "progress" && data.file?.endsWith(".onnx")) {
-            onProgress?.(`Downloading model… ${Math.round(data.progress)}%`, data.progress);
+          if (data.status === "progress") {
+            const pct = Math.round(data.progress ?? 0);
+            const file = data.file ? ` ${data.file}` : "";
+            onProgress?.(`Downloading model${file}… ${pct}%`, pct);
+            console.log("[transcribe] download", file, pct + "%");
           } else if (data.status === "done") {
+            console.log("[transcribe] file ready:", data.file);
+          } else if (data.status === "ready") {
             onProgress?.("Model loaded", 100);
+            console.log("[transcribe] model ready");
           }
         },
       } as any,
-    );
+    ).catch((err) => {
+      transcriberPromise = null;
+      throw err;
+    });
   }
   return transcriberPromise;
 }
