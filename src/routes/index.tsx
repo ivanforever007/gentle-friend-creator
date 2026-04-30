@@ -160,7 +160,7 @@ function HomePage() {
           </div>
           <div className="hidden items-center gap-1.5 rounded-full border border-border/60 bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground md:flex">
             <Zap className="h-3 w-3 text-accent" />
-            100% in-browser · zero upload to servers
+            Cloud render · pro MP4 export
           </div>
         </div>
       </header>
