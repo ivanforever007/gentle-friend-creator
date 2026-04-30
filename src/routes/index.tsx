@@ -11,8 +11,9 @@ import { Upload, Sparkles, Download, Wand2, Film, Loader2, Type, Palette, Zap } 
 
 import { CAPTION_STYLES, type CaptionStyle } from "@/lib/captionStyles";
 import { transcribeFile, type WordTiming } from "@/lib/transcribe";
-import { buildAss } from "@/lib/assBuilder";
-import { renderCaptionedVideo, type Resolution } from "@/lib/render";
+import { renderWithShotstack, type ShotstackResolution } from "@/lib/shotstackRender";
+
+type Resolution = ShotstackResolution;
 import { StylePicker } from "@/components/StylePicker";
 import { StyleControls } from "@/components/StyleControls";
 import { CaptionPreview } from "@/components/CaptionPreview";
@@ -40,7 +41,7 @@ function HomePage() {
   const [videoDims, setVideoDims] = useState<{ w: number; h: number }>({ w: 1080, h: 1920 });
   const [words, setWords] = useState<WordTiming[]>([]);
   const [style, setStyle] = useState<CaptionStyle>(CAPTION_STYLES[0]);
-  const [resolution, setResolution] = useState<Resolution>("1080p");
+  const [resolution, setResolution] = useState<Resolution>("hd");
   const [stage, setStage] = useState<Stage>("idle");
   const [progress, setProgress] = useState(0);
   const [statusMsg, setStatusMsg] = useState("");
@@ -108,18 +109,17 @@ function HomePage() {
     try {
       setStage("rendering");
       setProgress(0);
-      setStatusMsg("Preparing renderer…");
+      setStatusMsg("Uploading to render API…");
       setLogs([]);
-      if (outputUrl) { URL.revokeObjectURL(outputUrl); setOutputUrl(null); }
+      if (outputUrl) { setOutputUrl(null); }
 
-      const ass = buildAss(words, style, videoDims.w, videoDims.h);
-
-      const blob = await renderCaptionedVideo({
+      const { url } = await renderWithShotstack({
         videoFile: file,
-        assText: ass,
+        words,
+        style,
         resolution,
-        sourceWidth: videoDims.w,
-        sourceHeight: videoDims.h,
+        width: videoDims.w,
+        height: videoDims.h,
         onProgress: (r) => {
           setProgress(Math.round(r * 100));
           setStatusMsg(`Rendering… ${Math.round(r * 100)}%`);
@@ -127,7 +127,6 @@ function HomePage() {
         onLog: (m) => setLogs((prev) => [...prev.slice(-50), m]),
       });
 
-      const url = URL.createObjectURL(blob);
       setOutputUrl(url);
       setStage("done");
       setStatusMsg("Done!");
@@ -256,11 +255,10 @@ function HomePage() {
                       <Select value={resolution} onValueChange={(v) => setResolution(v as Resolution)}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="720p">720p HD</SelectItem>
-                          <SelectItem value="1080p">1080p Full HD</SelectItem>
-                          <SelectItem value="2k">2K QHD (1440p)</SelectItem>
-                          <SelectItem value="4k">4K UHD (2160p)</SelectItem>
-                          <SelectItem value="source">Source ({videoDims.h}p)</SelectItem>
+                          <SelectItem value="mobile">Mobile (640×360)</SelectItem>
+                          <SelectItem value="sd">SD (1024×576)</SelectItem>
+                          <SelectItem value="hd">HD 720p</SelectItem>
+                          <SelectItem value="1080">Full HD 1080p</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
