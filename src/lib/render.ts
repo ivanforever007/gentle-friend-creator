@@ -6,8 +6,12 @@ import { fetchFile, toBlobURL } from "@ffmpeg/util";
 import type { CaptionStyle } from "./captionStyles";
 import type { WordTiming } from "./transcribe";
 
-const coreURL = "/ffmpeg/ffmpeg-core.js";
-const wasmURL = "/ffmpeg/ffmpeg-core.wasm";
+// Load FFmpeg core from unpkg CDN — most reliable cross-environment.
+// The single-threaded UMD build works without SharedArrayBuffer.
+const FFMPEG_CORE_VERSION = "0.12.6";
+const CDN_BASE = `https://unpkg.com/@ffmpeg/core@${FFMPEG_CORE_VERSION}/dist/umd`;
+const coreURL = `${CDN_BASE}/ffmpeg-core.js`;
+const wasmURL = `${CDN_BASE}/ffmpeg-core.wasm`;
 
 let ffmpeg: FFmpeg | null = null;
 let loadingPromise: Promise<FFmpeg> | null = null;
