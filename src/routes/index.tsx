@@ -277,11 +277,25 @@ function HomePage() {
                     </Button>
 
                     {outputUrl && (
-                      <a href={outputUrl} download={downloadName} className="block">
-                        <Button variant="secondary" className="h-12 w-full font-bold" size="lg">
-                          <Download className="mr-2 h-4 w-4" /> Download MP4
-                        </Button>
-                      </a>
+                      <Button
+                        variant="secondary"
+                        className="h-12 w-full font-bold"
+                        size="lg"
+                        onClick={async () => {
+                          try {
+                            const r = await fetch(outputUrl);
+                            const b = await r.blob();
+                            const u = URL.createObjectURL(b);
+                            const a = document.createElement("a");
+                            a.href = u; a.download = downloadName; a.click();
+                            setTimeout(() => URL.revokeObjectURL(u), 5000);
+                          } catch {
+                            window.open(outputUrl, "_blank");
+                          }
+                        }}
+                      >
+                        <Download className="mr-2 h-4 w-4" /> Download MP4
+                      </Button>
                     )}
                   </div>
                 )}
